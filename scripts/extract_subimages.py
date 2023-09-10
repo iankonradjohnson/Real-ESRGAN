@@ -1,10 +1,15 @@
+import warnings
+warnings.filterwarnings("ignore")
+
 import argparse
+import glob
+
 import cv2
 import numpy as np
 import os
 import sys
 from basicsr.utils import scandir
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 from os import path as osp
 from tqdm import tqdm
 
@@ -59,7 +64,7 @@ def extract_subimages(opt):
         sys.exit(1)
 
     # scan all images
-    img_list = list(scandir(input_folder, full_path=True))
+    img_list = sorted(glob.glob(os.path.join(input_folder, '**/*'), recursive=True))
 
     pbar = tqdm(total=len(img_list), unit='image', desc='Extract')
     pool = Pool(opt['n_thread'])
@@ -94,7 +99,7 @@ def worker(path, opt):
     # remove the x2, x3, x4 and x8 in the filename for DIV2K
     img_name = img_name.replace('x2', '').replace('x3', '').replace('x4', '').replace('x8', '')
 
-    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
 
     h, w = img.shape[0:2]
     h_space = np.arange(0, h - crop_size + 1, step)
@@ -111,8 +116,7 @@ def worker(path, opt):
             cropped_img = img[x:x + crop_size, y:y + crop_size, ...]
             cropped_img = np.ascontiguousarray(cropped_img)
             cv2.imwrite(
-                osp.join(opt['save_folder'], f'{img_name}_s{index:03d}{extension}'), cropped_img,
-                [cv2.IMWRITE_PNG_COMPRESSION, opt['compression_level']])
+                osp.join(opt['save_folder'], f'{img_name}_s{index:03d}{extension}'), cropped_img)
     process_info = f'Processing {img_name} ...'
     return process_info
 
@@ -128,7 +132,7 @@ if __name__ == '__main__':
         type=int,
         default=0,
         help='Threshold size. Patches whose size is lower than thresh_size will be dropped.')
-    parser.add_argument('--n_thread', type=int, default=20, help='Thread number.')
+    parser.add_argument('--n_thread', type=int, default=cpu_count(), help='Thread number.')
     parser.add_argument('--compression_level', type=int, default=3, help='Compression level')
     args = parser.parse_args()
 

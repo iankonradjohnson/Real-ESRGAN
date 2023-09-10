@@ -44,14 +44,7 @@ class RealESRGANer():
         self.mod_scale = None
         self.half = half
 
-        # initialize model
-        if gpu_id is not None:
-            device = f'cuda:{gpu_id}' if torch.cuda.is_available() else 'cpu'
-            print(f'Using device {device}.')
-            self.device = torch.device(device) if device is None else device
-
-        else:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') if device is None else device
+        self.device = self.get_device(gpu_id)
 
         if isinstance(model_path, list):
             # dni
@@ -75,6 +68,23 @@ class RealESRGANer():
         self.model = model.to(self.device)
         if self.half:
             self.model = self.model.half()
+
+    def get_device(self, gpu_id: int):
+        # initialize model
+        if gpu_id is not None:
+            device = f'cuda:{gpu_id}' if torch.cuda.is_available() else 'cpu'
+            print(f'Using device {device}.')
+            return torch.device(device) if device is None else device
+        elif torch.cuda.is_available():
+            print(f'Using cuda.')
+            return torch.device('cuda')
+        elif torch.backends.mps.is_available():
+            print('Using mps')
+            return torch.device('mps')
+        else:
+            print('Using cpu')
+            return torch.device('cpi')
+
 
     def dni(self, net_a, net_b, dni_weight, key='params', loc='cpu'):
         """Deep network interpolation.

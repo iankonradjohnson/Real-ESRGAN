@@ -22,9 +22,11 @@ class RealESRNetModel(SRModel):
 
     def __init__(self, opt):
         super(RealESRNetModel, self).__init__(opt)
-        self.jpeger = DiffJPEG(differentiable=False).cuda()  # simulate JPEG compression artifacts
-        self.usm_sharpener = USMSharp().cuda()  # do usm sharpening
+        self.jpeger = DiffJPEG(differentiable=False).to(self.device) # simulate JPEG compression artifacts
+        self.usm_sharpener = USMSharp().to(self.device) # do usm sharpening
         self.queue_size = opt.get('queue_size', 180)
+        self.upsampling_modes = ['area', 'bilinear', 'bicubic'] if self.device.type != 'mps' else ['area', 'bilinear']
+
 
     @torch.no_grad()
     def _dequeue_and_enqueue(self):
@@ -38,9 +40,9 @@ class RealESRNetModel(SRModel):
         b, c, h, w = self.lq.size()
         if not hasattr(self, 'queue_lr'):
             assert self.queue_size % b == 0, f'queue size {self.queue_size} should be divisible by batch size {b}'
-            self.queue_lr = torch.zeros(self.queue_size, c, h, w).cuda()
+            self.queue_lr = torch.zeros(self.queue_size, c, h, w).to(self.device)
             _, c, h, w = self.gt.size()
-            self.queue_gt = torch.zeros(self.queue_size, c, h, w).cuda()
+            self.queue_gt = torch.zeros(self.queue_size, c, h, w).to(self.device)
             self.queue_ptr = 0
         if self.queue_ptr == self.queue_size:  # the pool is full
             # do dequeue and enqueue
@@ -91,7 +93,7 @@ class RealESRNetModel(SRModel):
                 scale = np.random.uniform(self.opt['resize_range'][0], 1)
             else:
                 scale = 1
-            mode = random.choice(['area', 'bilinear', 'bicubic'])
+            mode = random.choice(self.upsampling_modes)
             out = F.interpolate(out, scale_factor=scale, mode=mode)
             # add noise
             gray_noise_prob = self.opt['gray_noise_prob']
@@ -122,7 +124,8 @@ class RealESRNetModel(SRModel):
                 scale = np.random.uniform(self.opt['resize_range2'][0], 1)
             else:
                 scale = 1
-            mode = random.choice(['area', 'bilinear', 'bicubic'])
+            # Apple Silicon does not support bucubic upsampling
+            mode = random.choice(self.upsampling_modes)
             out = F.interpolate(
                 out, size=(int(ori_h / self.opt['scale'] * scale), int(ori_w / self.opt['scale'] * scale)), mode=mode)
             # add noise
@@ -147,7 +150,7 @@ class RealESRNetModel(SRModel):
             # Empirically, we find other combinations (sinc + JPEG + Resize) will introduce twisted lines.
             if np.random.uniform() < 0.5:
                 # resize back + the final sinc filter
-                mode = random.choice(['area', 'bilinear', 'bicubic'])
+                mode = random.choice(self.upsampling_modes)
                 out = F.interpolate(out, size=(ori_h // self.opt['scale'], ori_w // self.opt['scale']), mode=mode)
                 out = filter2D(out, self.sinc_kernel)
                 # JPEG compression
@@ -160,7 +163,7 @@ class RealESRNetModel(SRModel):
                 out = torch.clamp(out, 0, 1)
                 out = self.jpeger(out, quality=jpeg_p)
                 # resize back + the final sinc filter
-                mode = random.choice(['area', 'bilinear', 'bicubic'])
+                mode = random.choice(self.upsampling_modes)
                 out = F.interpolate(out, size=(ori_h // self.opt['scale'], ori_w // self.opt['scale']), mode=mode)
                 out = filter2D(out, self.sinc_kernel)
 

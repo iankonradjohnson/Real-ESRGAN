@@ -17,8 +17,6 @@ def main(args):
 
 
 if __name__ == '__main__':
-    """This script is used to generate meta info (txt file) for paired images.
-    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         '--input',
