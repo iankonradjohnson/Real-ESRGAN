@@ -12,6 +12,7 @@ from realesrgan.archs.srvgg_arch import SRVGGNetCompact
 from utils.ImagePreprocessor import ImagePreprocessor
 import torch.autograd.profiler as profiler
 
+WEIGHTS_DIR = "./weights"
 
 def main():
     """Inference demo for Real-ESRGAN.
@@ -65,13 +66,15 @@ def main():
 
     args = parser.parse_args()
 
+    custom_modesl = [file.split(".")[0] for file in os.listdir(WEIGHTS_DIR)]
+
     # determine models according to model names
     args.model_name = args.model_name.split('.')[0]
     if args.model_name == 'RealESRGAN_x4plus':  # x4 RRDBNet model
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
         netscale = 4
         file_url = ['https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth']
-    elif args.model_name in ['RealESRNet_x4plus', 'fine-tune-400000', 'model1', 'test', 'net_g_1000000', 'brghtness-contrast-1']:  # x4 RRDBNet model
+    elif args.model_name in custom_modesl:  # x4 RRDBNet model
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
         netscale = 4
         file_url = ['https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.1/RealESRNet_x4plus.pth']

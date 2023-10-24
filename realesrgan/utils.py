@@ -7,6 +7,7 @@ import threading
 import torch
 from basicsr.utils.download_util import load_file_from_url
 from torch.nn import functional as F
+from torch import mps
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -55,7 +56,7 @@ class RealESRGANer():
             if model_path.startswith('https://'):
                 model_path = load_file_from_url(
                     url=model_path, model_dir=os.path.join(ROOT_DIR, 'weights'), progress=True, file_name=None)
-            loadnet = torch.load(model_path, map_location=torch.device('cpu'))
+            loadnet = torch.load(model_path, map_location=self.device)
 
         # prefer to use params_ema
         if 'params_ema' in loadnet:
@@ -83,7 +84,7 @@ class RealESRGANer():
             return torch.device('mps')
         else:
             print('Using cpu')
-            return torch.device('cpi')
+            return torch.device('cpu')
 
 
     def dni(self, net_a, net_b, dni_weight, key='params', loc='cpu'):
@@ -142,6 +143,8 @@ class RealESRGANer():
         tiles_x = math.ceil(width / self.tile_size)
         tiles_y = math.ceil(height / self.tile_size)
 
+        output_tiles_np = []
+
         # loop over all tiles
         for y in range(tiles_y):
             for x in range(tiles_x):
@@ -167,7 +170,10 @@ class RealESRGANer():
                 input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
 
                 # upscale tile
-                torch.cuda.empty_cache()
+                if self.device == 'cuda':
+                    torch.cuda.empty_cache()
+                elif self.device == 'mps':
+                    torch.mps.empty_cache()
                 try:
                     with torch.no_grad():
                         output_tile = self.model(input_tile)
@@ -192,8 +198,23 @@ class RealESRGANer():
                             output_start_x:output_end_x] = output_tile[:, :, output_start_y_tile:output_end_y_tile,
                                                                        output_start_x_tile:output_end_x_tile]
 
+                # Convert the output_tile to numpy and store in our list along with its position
+                # information
+                tile_np = output_tile.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+                output_tiles_np.append(
+                    ((output_start_y, output_end_y, output_start_x, output_end_x), tile_np))
+
+        # Once all tiles are processed, we can assemble them on a numpy output array
+        output_np = np.zeros((output_height, output_width, channel), dtype=np.float16)
+        for (output_start_y, output_end_y, output_start_x,
+             output_end_x), tile in output_tiles_np:
+            output_np[output_start_y:output_end_y, output_start_x:output_end_x,
+            :] = tile.transpose(1, 2, 0)
+
         del self.img
         torch.cuda.empty_cache()
+
+        return output_np
 
     def post_process(self):
         # remove extra pad
@@ -233,13 +254,9 @@ class RealESRGANer():
 
         # ------------------- process image (without the alpha channel) ------------------- #
         self.pre_process(img)
-        if self.tile_size > 0:
-            self.tile_process()
-        else:
-            self.process()
-        output_img = self.post_process()
-        output_img = output_img.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-        output_img = np.transpose(output_img[[2, 1, 0], :, :], (1, 2, 0))
+
+        output_img = self.tile_process()
+
         if img_mode == 'L':
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
 
@@ -270,7 +287,10 @@ class RealESRGANer():
             output = (output_img * 255.0).round().astype(np.uint8)
 
         del output_img
-        torch.cuda.empty_cache()
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+        elif self.device == 'mps':
+            torch.mps.empty_cache()
 
         if outscale is not None and outscale != float(self.scale):
             output = cv2.resize(

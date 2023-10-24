@@ -10,6 +10,8 @@ from basicsr.utils.registry import MODEL_REGISTRY
 from collections import OrderedDict
 from torch.nn import functional as F
 
+INTERPOLATION_MODES = ['area', 'bilinear']
+
 
 @MODEL_REGISTRY.register()
 class RealESRGANModel(SRGANModel):
