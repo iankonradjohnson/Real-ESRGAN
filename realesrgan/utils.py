@@ -9,6 +9,7 @@ import queue
 import threading
 import torch
 from basicsr.utils.download_util import load_file_from_url
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from torch.nn import functional as F
 from torch import mps
 
@@ -49,6 +50,8 @@ class RealESRGANer():
         self.mod_scale = None
         self.half = half
         self.max_workers = max_workers
+
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
         self.device = self.get_device(gpu_id)
 
@@ -132,8 +135,14 @@ class RealESRGANer():
         # model inference
         self.output = self.model(self.img)
 
+
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_fixed(1),
+        retry=retry_if_exception_type(RuntimeError)
+    )
     def process_tile(self, x, y, tiles_x, tiles_y):
-        # Tile processing logic (same as before)
+        # Tile processing logic
         ofs_x = x * self.tile_size
         ofs_y = y * self.tile_size
         input_start_x = ofs_x
@@ -153,12 +162,8 @@ class RealESRGANer():
         elif self.device == 'mps':
             torch.mps.empty_cache()
 
-        try:
-            with torch.no_grad():
-                output_tile = self.model(input_tile)
-        except RuntimeError as error:
-            print('Error', error)
-            return None
+        with torch.no_grad():
+            output_tile = self.model(input_tile)
 
         # Calculate the output dimensions
         output_start_x = input_start_x * self.scale
@@ -205,8 +210,10 @@ class RealESRGANer():
 
         # Assemble the final image
         output_np = np.zeros((output_height, output_width, channel), dtype=np.float32)
-        for (output_start_y, output_end_y, output_start_x, output_end_x), tile in output_tiles_np:
-            output_np[output_start_y:output_end_y, output_start_x:output_end_x, :] = tile.transpose(
+        for (
+        output_start_y, output_end_y, output_start_x, output_end_x), tile in output_tiles_np:
+            output_np[output_start_y:output_end_y, output_start_x:output_end_x,
+            :] = tile.transpose(
                 1, 2, 0)
 
         # Clean up
