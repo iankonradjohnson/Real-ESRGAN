@@ -264,24 +264,24 @@ class RealESRGANer():
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
 
         # ------------------- process the alpha channel if necessary ------------------- #
-        if img_mode == 'RGBA':
-            if alpha_upsampler == 'realesrgan':
-                self.pre_process(alpha)
-                if self.tile_size > 0:
-                    self.tile_process()
-                else:
-                    self.process()
-                output_alpha = self.post_process()
-                output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-                output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
-                output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
-            else:  # use the cv2 resize for alpha channel
-                h, w = alpha.shape[0:2]
-                output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
-
-            # merge the alpha channel
-            output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
-            output_img[:, :, 3] = output_alpha
+        # if img_mode == 'RGBA':
+        #     if alpha_upsampler == 'realesrgan':
+        #         self.pre_process(alpha)
+        #         if self.tile_size > 0:
+        #             self.tile_process()
+        #         else:
+        #             self.process()
+        #         output_alpha = self.post_process()
+        #         output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+        #         output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
+        #         output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
+        #     else:  # use the cv2 resize for alpha channel
+        #         h, w = alpha.shape[0:2]
+        #         output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
+        #
+        #     # merge the alpha channel
+        #     output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
+        #     output_img[:, :, 3] = output_alpha
 
         # ------------------------------ return ------------------------------ #
         if max_range == 65535:  # 16-bit image
