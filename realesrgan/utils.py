@@ -137,7 +137,7 @@ class RealESRGANer():
 
 
     @retry(
-        stop=stop_after_attempt(5),
+        stop=stop_after_attempt(1),
         wait=wait_fixed(1),
         retry=retry_if_exception_type(RuntimeError)
     )
