@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import cv2
 import math
@@ -38,6 +39,7 @@ class RealESRGANer():
                  tile_pad=10,
                  pre_pad=10,
                  half=False,
+                 max_workers=5,
                  device=None,
                  gpu_id=None):
         self.scale = scale
@@ -46,6 +48,7 @@ class RealESRGANer():
         self.pre_pad = pre_pad
         self.mod_scale = None
         self.half = half
+        self.max_workers = max_workers
 
         self.device = self.get_device(gpu_id)
 
@@ -129,94 +132,87 @@ class RealESRGANer():
         # model inference
         self.output = self.model(self.img)
 
+    def process_tile(self, x, y, tiles_x, tiles_y):
+        # Tile processing logic (same as before)
+        ofs_x = x * self.tile_size
+        ofs_y = y * self.tile_size
+        input_start_x = ofs_x
+        input_end_x = min(ofs_x + self.tile_size, self.img.shape[3])
+        input_start_y = ofs_y
+        input_end_y = min(ofs_y + self.tile_size, self.img.shape[2])
+        input_start_x_pad = max(input_start_x - self.tile_pad, 0)
+        input_end_x_pad = min(input_end_x + self.tile_pad, self.img.shape[3])
+        input_start_y_pad = max(input_start_y - self.tile_pad, 0)
+        input_end_y_pad = min(input_end_y + self.tile_pad, self.img.shape[2])
+        input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad,
+                     input_start_x_pad:input_end_x_pad]
+
+        # Process the tile using the model
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+        elif self.device == 'mps':
+            torch.mps.empty_cache()
+
+        try:
+            with torch.no_grad():
+                output_tile = self.model(input_tile)
+        except RuntimeError as error:
+            print('Error', error)
+            return None
+
+        # Calculate the output dimensions
+        output_start_x = input_start_x * self.scale
+        output_end_x = input_end_x * self.scale
+        output_start_y = input_start_y * self.scale
+        output_end_y = input_end_y * self.scale
+        output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
+        output_end_x_tile = output_start_x_tile + (input_end_x - input_start_x) * self.scale
+        output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
+        output_end_y_tile = output_start_y_tile + (input_end_y - input_start_y) * self.scale
+
+        # Convert to numpy for further processing
+        tile_np = output_tile.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+        print(f'\tTile {y * tiles_x + x + 1}/{tiles_x * tiles_y} processed.')
+
+        return ((output_start_y, output_end_y, output_start_x, output_end_x),
+                tile_np[:, output_start_y_tile:output_end_y_tile,
+                output_start_x_tile:output_end_x_tile])
+
     def tile_process(self):
         """It will first crop input images to tiles, and then process each tile.
-        Finally, all the processed tiles are merged into one images.
+        Finally, all the processed tiles are merged into one image."""
 
-        Modified from: https://github.com/ata4/esrgan-launcher
-        """
         batch, channel, height, width = self.img.shape
         output_height = height * self.scale
         output_width = width * self.scale
-        output_shape = (batch, channel, output_height, output_width)
-
-        # start with black image
-        self.output = self.img.new_zeros(output_shape)
         tiles_x = math.ceil(width / self.tile_size)
         tiles_y = math.ceil(height / self.tile_size)
 
+        # Start with an empty list to store the results
         output_tiles_np = []
 
-        # loop over all tiles
-        for y in range(tiles_y):
-            for x in range(tiles_x):
-                # extract tile from input image
-                ofs_x = x * self.tile_size
-                ofs_y = y * self.tile_size
-                # input tile area on total image
-                input_start_x = ofs_x
-                input_end_x = min(ofs_x + self.tile_size, width)
-                input_start_y = ofs_y
-                input_end_y = min(ofs_y + self.tile_size, height)
+        # Multithreading for processing tiles
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = []
+            for y in range(tiles_y):
+                for x in range(tiles_x):
+                    futures.append(executor.submit(self.process_tile, x, y, tiles_x, tiles_y))
 
-                # input tile area on total image with padding
-                input_start_x_pad = max(input_start_x - self.tile_pad, 0)
-                input_end_x_pad = min(input_end_x + self.tile_pad, width)
-                input_start_y_pad = max(input_start_y - self.tile_pad, 0)
-                input_end_y_pad = min(input_end_y + self.tile_pad, height)
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    output_tiles_np.append(result)
 
-                # input tile dimensions
-                input_tile_width = input_end_x - input_start_x
-                input_tile_height = input_end_y - input_start_y
-                tile_idx = y * tiles_x + x + 1
-                input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
+        # Assemble the final image
+        output_np = np.zeros((output_height, output_width, channel), dtype=np.float32)
+        for (output_start_y, output_end_y, output_start_x, output_end_x), tile in output_tiles_np:
+            output_np[output_start_y:output_end_y, output_start_x:output_end_x, :] = tile.transpose(
+                1, 2, 0)
 
-                # upscale tile
-                if self.device == 'cuda':
-                    torch.cuda.empty_cache()
-                elif self.device == 'mps':
-                    torch.mps.empty_cache()
-                try:
-                    with torch.no_grad():
-                        output_tile = self.model(input_tile)
-                except RuntimeError as error:
-                    print('Error', error)
-                print(f'\tTile {tile_idx}/{tiles_x * tiles_y}')
-
-                # output tile area on total image
-                output_start_x = input_start_x * self.scale
-                output_end_x = input_end_x * self.scale
-                output_start_y = input_start_y * self.scale
-                output_end_y = input_end_y * self.scale
-
-                # output tile area without padding
-                output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
-                output_end_x_tile = output_start_x_tile + input_tile_width * self.scale
-                output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
-                output_end_y_tile = output_start_y_tile + input_tile_height * self.scale
-
-                # put tile into output image
-                self.output[:, :, output_start_y:output_end_y,
-                            output_start_x:output_end_x] = output_tile[:, :, output_start_y_tile:output_end_y_tile,
-                                                                       output_start_x_tile:output_end_x_tile]
-
-                # Convert the output_tile to numpy and store in our list along with its position
-                # information
-                tile_np = output_tile.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-                output_tiles_np.append(
-                    ((output_start_y, output_end_y, output_start_x, output_end_x), tile_np))
-
-                time.sleep(1)
-
-        # Once all tiles are processed, we can assemble them on a numpy output array
-        output_np = np.zeros((output_height, output_width, channel), dtype=np.float16)
-        for (output_start_y, output_end_y, output_start_x,
-             output_end_x), tile in output_tiles_np:
-            output_np[output_start_y:output_end_y, output_start_x:output_end_x,
-            :] = tile.transpose(1, 2, 0)
-
+        # Clean up
         del self.img
         torch.cuda.empty_cache()
+
         return output_np
 
     def post_process(self):
@@ -264,24 +260,24 @@ class RealESRGANer():
             output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2GRAY)
 
         # ------------------- process the alpha channel if necessary ------------------- #
-        # if img_mode == 'RGBA':
-        #     if alpha_upsampler == 'realesrgan':
-        #         self.pre_process(alpha)
-        #         if self.tile_size > 0:
-        #             self.tile_process()
-        #         else:
-        #             self.process()
-        #         output_alpha = self.post_process()
-        #         output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-        #         output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
-        #         output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
-        #     else:  # use the cv2 resize for alpha channel
-        #         h, w = alpha.shape[0:2]
-        #         output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
-        #
-        #     # merge the alpha channel
-        #     output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
-        #     output_img[:, :, 3] = output_alpha
+        if img_mode == 'RGBA':
+            if alpha_upsampler == 'realesrgan':
+                self.pre_process(alpha)
+                if self.tile_size > 0:
+                    self.tile_process()
+                else:
+                    self.process()
+                output_alpha = self.post_process()
+                output_alpha = output_alpha.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+                output_alpha = np.transpose(output_alpha[[2, 1, 0], :, :], (1, 2, 0))
+                output_alpha = cv2.cvtColor(output_alpha, cv2.COLOR_BGR2GRAY)
+            else:  # use the cv2 resize for alpha channel
+                h, w = alpha.shape[0:2]
+                output_alpha = cv2.resize(alpha, (w * self.scale, h * self.scale), interpolation=cv2.INTER_LINEAR)
+
+            # merge the alpha channel
+            output_img = cv2.cvtColor(output_img, cv2.COLOR_BGR2BGRA)
+            output_img[:, :, 3] = output_alpha
 
         # ------------------------------ return ------------------------------ #
         if max_range == 65535:  # 16-bit image
