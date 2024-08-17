@@ -162,7 +162,7 @@ def main():
                 img_mode = None
 
             try:
-                img = preprocessor.process(img)
+                # img = preprocessor.process(img)
                 if args.face_enhance:
                     _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
                 else:

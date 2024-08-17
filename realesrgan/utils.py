@@ -1,3 +1,5 @@
+import time
+
 import cv2
 import math
 import numpy as np
@@ -204,6 +206,8 @@ class RealESRGANer():
                 output_tiles_np.append(
                     ((output_start_y, output_end_y, output_start_x, output_end_x), tile_np))
 
+                time.sleep(1)
+
         # Once all tiles are processed, we can assemble them on a numpy output array
         output_np = np.zeros((output_height, output_width, channel), dtype=np.float16)
         for (output_start_y, output_end_y, output_start_x,
@@ -213,7 +217,6 @@ class RealESRGANer():
 
         del self.img
         torch.cuda.empty_cache()
-
         return output_np
 
     def post_process(self):
