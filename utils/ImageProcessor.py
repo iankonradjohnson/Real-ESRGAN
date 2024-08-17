@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 
-class ImagePreprocessor:
+class ImageProcessor:
 
     def __init__(self, brightness=0, contrast=1.0, scale=1.0):
         self.brightness = brightness if brightness is not None else 0

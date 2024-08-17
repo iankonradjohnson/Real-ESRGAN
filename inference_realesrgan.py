@@ -9,7 +9,7 @@ from basicsr.utils.download_util import load_file_from_url
 
 from realesrgan import RealESRGANer
 from realesrgan.archs.srvgg_arch import SRVGGNetCompact
-from utils.ImagePreprocessor import ImagePreprocessor
+from utils.ImageProcessor import ImageProcessor
 import torch.autograd.profiler as profiler
 
 WEIGHTS_DIR = "./weights"
@@ -62,6 +62,8 @@ def main():
         '-c', '--contrast', type=float, default=None, help='Adjust the image contrast before the enhancement')
     parser.add_argument(
         '-ps', '--prescale', type=float, default=None, help='Adjust the image scale before the enhancement')
+    parser.add_argument(
+        '-p', '--postscale', type=float, default=None, help='Adjust the image scale after the enhancement')
 
 
     args = parser.parse_args()
@@ -118,10 +120,14 @@ def main():
         dni_weight = [args.denoise_strength, 1 - args.denoise_strength]
 
     # preprocessor
-    preprocessor = ImagePreprocessor(
+    preprocessor = ImageProcessor(
         brightness=args.brightness,
         contrast=args.contrast,
         scale=args.prescale)
+
+    postprocessor = ImageProcessor(
+        scale=args.postscale
+    )
 
     # restorer
     upsampler = RealESRGANer(
@@ -167,6 +173,7 @@ def main():
                     _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
                 else:
                     output, _ = upsampler.enhance(img, outscale=args.outscale)
+                output = postprocessor.scale_image(output)
             except RuntimeError as error:
                 print('Error', error)
                 traceback.print_exc()
