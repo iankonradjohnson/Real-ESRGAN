@@ -13,9 +13,6 @@ from torch.nn import functional as F
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
-
-
 class RealESRGANer():
     """A helper class for upsampling images with RealESRGAN."""
 
@@ -104,36 +101,40 @@ class RealESRGANer():
         retry=retry_if_exception_type(RuntimeError)
     )
     def process_tile(self, x, y, tiles_x, tiles_y):
-        ofs_x = x * self.tile_size
-        ofs_y = y * self.tile_size
-        input_start_x = ofs_x
-        input_end_x = min(ofs_x + self.tile_size, self.img.shape[3])
-        input_start_y = ofs_y
-        input_end_y = min(ofs_y + self.tile_size, self.img.shape[2])
-        input_start_x_pad = max(input_start_x - self.tile_pad, 0)
-        input_end_x_pad = min(input_end_x + self.tile_pad, self.img.shape[3])
-        input_start_y_pad = max(input_start_y - self.tile_pad, 0)
-        input_end_y_pad = min(input_end_y + self.tile_pad, self.img.shape[2])
-        input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
+        try:
+            ofs_x = x * self.tile_size
+            ofs_y = y * self.tile_size
+            input_start_x = ofs_x
+            input_end_x = min(ofs_x + self.tile_size, self.img.shape[3])
+            input_start_y = ofs_y
+            input_end_y = min(ofs_y + self.tile_size, self.img.shape[2])
+            input_start_x_pad = max(input_start_x - self.tile_pad, 0)
+            input_end_x_pad = min(input_end_x + self.tile_pad, self.img.shape[3])
+            input_start_y_pad = max(input_start_y - self.tile_pad, 0)
+            input_end_y_pad = min(input_end_y + self.tile_pad, self.img.shape[2])
+            input_tile = self.img[:, :, input_start_y_pad:input_end_y_pad, input_start_x_pad:input_end_x_pad]
 
-        with torch.no_grad():
-            output_tile = self.model(input_tile)
+            with torch.no_grad():
+                output_tile = self.model(input_tile)
 
-        output_start_x = input_start_x * self.scale
-        output_end_x = input_end_x * self.scale
-        output_start_y = input_start_y * self.scale
-        output_end_y = input_end_y * self.scale
-        output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
-        output_end_x_tile = output_start_x_tile + (input_end_x - input_start_x) * self.scale
-        output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
-        output_end_y_tile = output_start_y_tile + (input_end_y - input_start_y) * self.scale
+            output_start_x = input_start_x * self.scale
+            output_end_x = input_end_x * self.scale
+            output_start_y = input_start_y * self.scale
+            output_end_y = input_end_y * self.scale
+            output_start_x_tile = (input_start_x - input_start_x_pad) * self.scale
+            output_end_x_tile = output_start_x_tile + (input_end_x - input_start_x) * self.scale
+            output_start_y_tile = (input_start_y - input_start_y_pad) * self.scale
+            output_end_y_tile = output_start_y_tile + (input_end_y - input_start_y) * self.scale
 
-        tile_np = output_tile.data.squeeze().float().cpu().clamp_(0, 1).numpy()
-        print(f'\tTile {y * tiles_x + x + 1}/{tiles_x * tiles_y} processed.')
+            tile_np = output_tile.data.squeeze().float().cpu().clamp_(0, 1).numpy()
+            print(f'\tTile {y * tiles_x + x + 1}/{tiles_x * tiles_y} processed.')
 
-        return ((output_start_y, output_end_y, output_start_x, output_end_x),
-                tile_np[:, output_start_y_tile:output_end_y_tile,
-                output_start_x_tile:output_end_x_tile])
+            return ((output_start_y, output_end_y, output_start_x, output_end_x),
+                    tile_np[:, output_start_y_tile:output_end_y_tile,
+                    output_start_x_tile:output_end_x_tile])
+        except RuntimeError as e:
+            print(f"Error processing tile {y * tiles_x + x + 1}/{tiles_x * tiles_y}: {e}")
+            raise
 
     def tile_process(self):
         batch, channel, height, width = self.img.shape
@@ -144,22 +145,28 @@ class RealESRGANer():
 
         output_tiles_np = []
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = [executor.submit(self.process_tile, x, y, tiles_x, tiles_y)
-                       for y in range(tiles_y) for x in range(tiles_x)]
+        # with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        #     futures = [executor.submit(self.process_tile, x, y, tiles_x, tiles_y)
+        #                for y in range(tiles_y) for x in range(tiles_x)]
+        #
+        #     for future in as_completed(futures):
+        #         result = future.result()
+        #         if result is not None:
+        #             output_tiles_np.append(result)
 
-            for future in as_completed(futures):
-                result = future.result()
-                if result is not None:
-                    output_tiles_np.append(result)
+        for y in range(tiles_y):
+            for x in range(tiles_x):
+                output_tiles_np.append(self.process_tile(x, y, tiles_x, tiles_y))
 
         output_np = np.zeros((output_height, output_width, channel), dtype=np.float32)
         for (output_start_y, output_end_y, output_start_x, output_end_x), tile in output_tiles_np:
             output_np[output_start_y:output_end_y, output_start_x:output_end_x, :] = tile.transpose(1, 2, 0)
 
         del self.img
-        torch.cuda.empty_cache()
-
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+        elif self.device == 'mps':
+            torch.mps.empty_cache()
         return output_np
 
     def post_process(self):
