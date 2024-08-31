@@ -192,12 +192,20 @@ class RealESRGANer():
             img_mode = 'RGBA'
             alpha = img[:, :, 3]
             img = img[:, :, 0:3]
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            # Check if the image is already in RGB
+            if np.array_equal(img, cv2.cvtColor(img, cv2.COLOR_BGR2RGB)):
+                img_mode = 'RGB'
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
             if alpha_upsampler == 'realesrgan':
                 alpha = cv2.cvtColor(alpha, cv2.COLOR_GRAY2RGB)
         else:
             img_mode = 'RGB'
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            # Only convert if the image is in BGR
+            if not np.array_equal(img, cv2.cvtColor(img, cv2.COLOR_BGR2RGB)):
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
         self.pre_process(img)
         output_img = self.tile_process()
@@ -231,10 +239,12 @@ class RealESRGANer():
             torch.mps.empty_cache()
 
         if outscale is not None and outscale != float(self.scale):
-            output = cv2.resize(output, (int(w_input * outscale), int(h_input * outscale)), interpolation=cv2.INTER_LANCZOS4)
+            output = cv2.resize(output, (int(w_input * outscale), int(h_input * outscale)),
+                                interpolation=cv2.INTER_LANCZOS4)
+
+        output = cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
 
         return output, img_mode
-
 
 class PrefetchReader(threading.Thread):
     """Prefetch images."""
