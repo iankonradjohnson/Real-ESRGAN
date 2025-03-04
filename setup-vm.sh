@@ -3,24 +3,13 @@
 # Exit on error
 set -e
 
-# Function to check and install required packages
-install_dependencies() {
-    echo "Checking and installing necessary packages..."
-
-    # Install Git if not installed
+# Function to check if Git is installed
+install_git() {
     if ! command -v git &> /dev/null; then
-        echo "Installing Git..."
+        echo "Git not found. Installing..."
         sudo apt update && sudo apt install -y git
     else
         echo "Git is already installed."
-    fi
-
-    # Install unzip if not installed
-    if ! command -v unzip &> /dev/null; then
-        echo "Installing Unzip..."
-        sudo apt install -y unzip
-    else
-        echo "Unzip is already installed."
     fi
 }
 
@@ -67,13 +56,13 @@ clone_repo() {
     else
         echo "Cloning repository: $REPO_URL"
         git clone "$REPO_URL"
-    fi
+    fia
 }
 
 # Run functions
-install_dependencies
+install_git
 configure_git
 setup_github_ssh
 clone_repo
 
-echo "✅ Git, Unzip, and repository setup completed successfully!"
+echo "✅ Git setup and repository clone completed successfully!"

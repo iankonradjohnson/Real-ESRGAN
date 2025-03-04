@@ -68,7 +68,6 @@ def main():
     parser.add_argument(
         '-mw', '--max-workers', type=int, default=None, help='Number of workers for multithreading tiles')
 
-
     args = parser.parse_args()
 
     custom_modesl = [file.split(".")[0] for file in os.listdir(WEIGHTS_DIR)]
@@ -170,7 +169,7 @@ def main():
                 img_mode = None
 
             try:
-                # img = preprocessor.process(img)
+                img = preprocessor.process(img)
                 if args.face_enhance:
                     _, _, output = face_enhancer.enhance(img, has_aligned=False, only_center_face=False, paste_back=True)
                 else:
