@@ -56,7 +56,7 @@ clone_repo() {
     else
         echo "Cloning repository: $REPO_URL"
         git clone "$REPO_URL"
-    fia
+    fi
 }
 
 # Run functions
